@@ -1,166 +1,136 @@
-# Architectural Ablation for VLA Failure Detection — Building on SAFE
+# Failure Prediction for Generative Robot Policy: An Architecture Ablation on SAFE
 
-A course-project extension of the **SAFE** failure-detection framework
-(Gu et al., NeurIPS 2025) that asks: *which sequence-modeling architecture
-is best for detecting failures of Vision-Language-Action (VLA) robot policies
-on a small dataset?*
+This is a course-project extension of [SAFE](https://github.com/vla-safe/SAFE) (Gu et al., NeurIPS 2025). The original work introduced the multitask failure-detection problem for VLA models and showed it can be solved zero-shot on unseen tasks. We took their public release, kept the core method intact, and asked one practical question on top of it: which sequence-modeling backbone actually works best for this job when the dataset is small?
 
-We extend the original SAFE codebase with three additional architectures
-(GRU, causal Transformer, Temporal Convolutional Network), an end-to-end
-training/evaluation pipeline tuned for Indiana University's Big Red 200
-HPC cluster, paper-ready ablation tables, and per-rollout failure-detection
-visualizations.
+To answer it we plugged in three more architectures (GRU, a causal Transformer, and a TCN), ran the whole sweep on Indiana University's Big Red 200 cluster, and built tooling to turn the SLURM logs into a paper-style ablation table plus per-rollout failure-score plots.
 
-> ⚠️ **All credit for the underlying methodology, data collection, and the
-> codebase this work builds on goes to the SAFE authors.** We did not
-> design SAFE; we adapted their public release and added baseline architectures
-> + reproducibility tooling for a class project. Their paper, repository, and
-> dataset releases are cited in detail in the **Acknowledgements** section
-> below — please cite them, not us.
+> Almost everything that matters here is the SAFE authors' work. Their method, their data, their codebase. We added some baseline architectures and reproducibility scripts. If you cite anything, please cite their NeurIPS paper, not this fork. Full attribution is in the [Acknowledgements](#acknowledgements) below.
 
-![Splash Figure (from the original SAFE paper)](assets/safe-teaser-static.png)
+![Splash figure (from the original SAFE paper)](assets/safe-teaser-static.png)
 
 ---
 
 ## Table of contents
 
-1. [What's new in this fork](#whats-new-in-this-fork)
-2. [Hardware & environment requirements](#hardware--environment-requirements)
-3. [Quick-start (high level)](#quick-start-high-level)
-4. [Step-by-step reproduction](#step-by-step-reproduction)
+1. [What's actually new in this fork](#whats-actually-new-in-this-fork)
+2. [What you'd need to run it](#what-youd-need-to-run-it)
+3. [Quick start (single GPU)](#quick-start-single-gpu)
+4. [Full reproduction (HPC cluster)](#full-reproduction-hpc-cluster)
 5. [Repository layout](#repository-layout)
 6. [Sample results](#sample-results)
-7. [Acknowledgements & full credit](#acknowledgements--full-credit)
+7. [Acknowledgements](#acknowledgements)
 8. [Citation](#citation)
 9. [License](#license)
 
 ---
 
-## What's new in this fork
+## What's actually new in this fork
 
-Everything original to SAFE is unchanged in spirit; we **added** the following on top:
+Everything that was already in SAFE works the same way. We just added a few files alongside theirs.
 
-| Addition | File(s) | Purpose |
-|----------|---------|---------|
-| **GRU detector** | `failure_prob/model/gru.py`, `failure_prob/conf/model/gru.yaml` | Lighter cousin of LSTM, drop-in for the existing recurrent slot |
-| **Causal Transformer** | `failure_prob/model/transformer.py`, `failure_prob/conf/model/transformer.yaml` | Self-attention with causal mask, AdamW + LR warmup |
-| **TCN (Temporal Conv Net)** | `failure_prob/model/tcn.py`, `failure_prob/conf/model/tcn.yaml` | Dilated causal-convolution alternative to RNNs |
-| **Final paper sweep scripts** | `scripts/batch_training/{bigred200_pi0fast_final.sbatch, bigred200_openvla_final.sbatch, submit_*_final.bash}` | Parallel-on-cluster sweeps with focused hyperparam grids and 5 seeds |
-| **Result extractor** | `scripts/extract_results.py` | Parses SLURM `.out`/`.err` logs into a paper-ready leaderboard with mean ± std across seeds; emits a per-run CSV |
-| **Per-rollout failure-curve plots** | `scripts/plot_failure_curves.py` | Loads any saved checkpoint and renders score-over-time plots (overlay, per-task panels, detection-time histogram, one PNG per rollout) |
-| **Cluster docs** | `BIGRED200_FEAT_VIS_SETUP.md`, `BIGRED200_GUIDANCE.md` | End-to-end "how to run this on Big Red 200" + general cluster onboarding |
-| **Dataset structure docs** | `docs/DATASET_LAYOUT.md` | What the on-disk dataset directories should look like |
-| **Cluster sync helper** | `sync_to_br200.sh` | rsync wrapper that excludes large dirs |
-| **Updated training & data utilities** | `failure_prob/conf/__init__.py`, `failure_prob/data/utils.py`, `failure_prob/train.py` | Register new model configs (GRU/Transformer/TCN), small data-loading fixes |
+| What | Where it lives | Why |
+|------|----------------|-----|
+| GRU detector | `failure_prob/model/gru.py` plus a one-line config in `failure_prob/conf/model/gru.yaml` | Lighter than LSTM, easy to drop in for an apples-to-apples comparison |
+| Causal Transformer | `failure_prob/model/transformer.py`, `failure_prob/conf/model/transformer.yaml` | Standard self-attention with a causal mask. Uses AdamW and learning-rate warmup since regular Adam was unstable on this small dataset |
+| TCN (dilated causal conv) | `failure_prob/model/tcn.py`, `failure_prob/conf/model/tcn.yaml` | A non-recurrent, parallelizable alternative to LSTMs |
+| Final sweep scripts | `scripts/batch_training/bigred200_*_final.sbatch` and `submit_*_final.bash` | Run the whole architecture grid for both datasets in one shot, on SLURM, with 5 seeds |
+| Result extractor | `scripts/extract_results.py` | Pulls `wandb` summary blocks out of the SLURM stderr logs and produces a paper-ready leaderboard with mean and std across seeds |
+| Failure-curve plotter | `scripts/plot_failure_curves.py` | Loads any saved checkpoint and plots per-rollout failure scores over time. Useful for picking figures |
+| Cluster docs | `BIGRED200_FEAT_VIS_SETUP.md`, `BIGRED200_GUIDANCE.md` | Step-by-step guide for running this on Big Red 200, including all the gotchas we hit |
+| Dataset layout doc | `docs/DATASET_LAYOUT.md` | What the on-disk dataset folders should look like once you download them |
 
-The original SAFE failure-detection method, dataset format, evaluation
-metrics, and training loop are **unchanged** — we only swapped in additional
-detector architectures alongside the existing LSTM / MLP / KNN-style /
-RND / log-density / handcrafted baselines.
+The SAFE training loop, evaluation routine, and dataset format are untouched. Our extra detectors live next to the existing LSTM, MLP, KNN-style, RND, log-density, and handcrafted baselines and use the exact same loss and evaluation code.
 
 ---
 
-## Hardware & environment requirements
+## What you'd need to run it
 
-This project uses non-trivial compute. The course-project results in `results/`
-were generated on:
+We did the final sweeps on Indiana University's Big Red 200. If you don't have access to that, the smaller OpenVLA WidowX experiments will fit on a single workstation GPU.
 
-| Resource | Spec |
-|----------|------|
-| GPU | 1× NVIDIA A100-SXM4-40GB |
-| Node | Big Red 200 GPU compute node (SLURM-managed) |
-| RAM | 96–200 GB |
-| Storage | `/N/scratch/$USER` Lustre filesystem (~50 GB free) |
-| Walltime per sweep | ~9–13 hours (one full architecture grid × 5 seeds) |
-| OS / scheduler | SUSE Linux + SLURM 23.x |
-| Python | 3.10 |
-| PyTorch | 2.x with CUDA 12.8 wheels |
-| CUDA toolkit module | `cudatoolkit/12.6` (system module — required to avoid Lustre-induced `dlopen` hang) |
+| Resource | What we used | Minimum to reproduce |
+|----------|--------------|----------------------|
+| GPU | 1× NVIDIA A100 (40 GB) | 1× A100 / RTX 3090 / RTX 4090 with 24+ GB |
+| RAM | 96 to 200 GB on the cluster node | 64 GB for the full Franka dataset, 32 GB for OpenVLA |
+| Disk | ~50 GB free for both datasets | Same |
+| OS | SUSE Linux + SLURM 23.x | Any Linux with conda |
+| Python | 3.10 | 3.10 |
+| PyTorch | 2.x with CUDA 12.8 wheels | Same |
+| Cluster module | `cudatoolkit/12.6` (this is essential, not optional, see note below) | Equivalent system CUDA on your machine |
+| Wall-clock per dataset sweep | About 9 to 13 hours | Similar |
 
-**It's fine if you can't run it yourself** — the data, model checkpoints, and
-result CSVs are produced offline on a research cluster that requires an IU
-account. Below we describe exactly what would be needed if you wanted to.
+One thing that bit us hard: on Big Red 200's Lustre filesystem, `import torch` would hang for hours because the bundled NVIDIA `.so` libraries take forever to `dlopen`. The fix is to load the system cudatoolkit module first, so torch finds the system libs. If you're running on your own machine and have CUDA installed normally, you won't hit this.
 
-A single-GPU desktop (A100/RTX 3090/4090, 24+ GB VRAM, 64 GB RAM, ~50 GB disk)
-should also work for the OpenVLA WidowX dataset (~1.6 GB). The pi0-FAST Franka
-dataset (~47 GB) needs more storage and is slower to load.
+The full set of cluster-specific landmines (and how we got around them) is documented in [`BIGRED200_FEAT_VIS_SETUP.md`](BIGRED200_FEAT_VIS_SETUP.md).
 
 ---
 
-## Quick-start (high level)
+## Quick start (single GPU)
+
+This path works on any Linux box with a compatible GPU. It runs one config to confirm everything wires up, no SLURM needed.
 
 ```bash
 # 1. Clone
-git clone <this-repo-url>
-cd safe
+git clone https://github.com/dsatyam09/Failure-Prediction-for-Generative-Robot-Policy.git
+cd Failure-Prediction-for-Generative-Robot-Policy
 
-# 2. Create environment
-conda create --prefix ./envs/vla-safe python=3.10 -y
-conda activate ./envs/vla-safe
+# 2. Set up the environment
+conda create -n vla-safe python=3.10 -y
+conda activate vla-safe
 pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install pandas scipy pyyaml tqdm "imageio[ffmpeg]" hydra-core omegaconf scikit-learn opencv_python einops wandb plotly matplotlib natsort flask ml_dtypes umap-learn
 pip install -e .
 
-# 3. Get the datasets (see docs/DATASET_LAYOUT.md for expected on-disk layout)
-#    rollouts_all 2 (~47 GB pi0-FAST Franka):
-#      https://drive.google.com/file/d/13z_cdwnaJota2iHkZbhYgVALujZwtM3b/view?usp=sharing
-#    openvla_widowx (~1.6 GB OpenVLA WidowX):
-#      https://drive.google.com/file/d/1EwaccasZjnlM9L6SEYyWqTd7d6-BR9zp/view?usp=sharing
-#    Unzip both at the repo root.
+# 3. Get the datasets (released by the SAFE authors). See docs/DATASET_LAYOUT.md
+#    for the expected folder structure once you've unzipped them.
+#      Pi0-FAST Franka rollouts (~47 GB):
+#        https://drive.google.com/file/d/13z_cdwnaJota2iHkZbhYgVALujZwtM3b/view?usp=sharing
+#      OpenVLA WidowX rollouts (~1.6 GB):
+#        https://drive.google.com/file/d/1EwaccasZjnlM9L6SEYyWqTd7d6-BR9zp/view?usp=sharing
 
-# 4. Configure data paths
+# 4. Tell the code where the datasets live
 cp setup_envs.bash.template setup_envs.bash
-# Edit setup_envs.bash to point at the datasets you just unzipped.
+# Edit setup_envs.bash so the paths point to the unzipped datasets
 
-# 5. (On a workstation, no SLURM) Run a single training config to verify:
+# 5. Run a single config. ~10 minutes with a warm cache.
 source setup_envs.bash
-export WANDB_MODE=offline   # or `wandb login` if you want online runs
+export WANDB_MODE=offline   # or run `wandb login` if you'd rather log online
 python -u -m failure_prob.train \
     dataset=pizero_fast_droid_rollouts_all_2 \
     dataset.data_path_prefix="${SAFE_OPENPI_DROID_ROLLOUT_ROOT}" \
     dataset.feat_name=pre_logits dataset.token_idx_rel=mean dataset.load_to_cuda=False \
     model=lstm model.n_epochs=200 train.seed=0 train.exp_suffix=quicktest
-
-# 6. (Optional) Run the full paper sweeps and produce ablation tables.
-#    See "Step-by-step reproduction" below for SLURM-cluster instructions.
 ```
+
+If that finishes with `Smoke test finished` and a wandb summary, you're set.
 
 ---
 
-## Step-by-step reproduction
+## Full reproduction (HPC cluster)
 
-For full reproduction of the final ablation table + per-rollout figures,
-we used Indiana University's Big Red 200. The complete walkthrough (with
-all the cluster-specific gotchas we hit and fixed) is in
-**[`BIGRED200_FEAT_VIS_SETUP.md`](BIGRED200_FEAT_VIS_SETUP.md)**.
-
-The condensed version:
+This is what we actually did to produce the numbers in the report. It assumes a SLURM-managed cluster with a `gpu` partition. The complete walkthrough, including every error we hit and what fixed it, lives in [`BIGRED200_FEAT_VIS_SETUP.md`](BIGRED200_FEAT_VIS_SETUP.md). The condensed version:
 
 ```bash
-# --- ON A SLURM-MANAGED HPC NODE ---
-
-# 1. Set up env (one-time, see BIGRED200_FEAT_VIS_SETUP.md §4)
+# 1. Set up the env once. See BIGRED200_FEAT_VIS_SETUP.md §4 for the full version.
 module purge
 module load conda/25.3.0
-module load cudatoolkit/12.6      # IMPORTANT — without this, torch hangs on Lustre
+module load cudatoolkit/12.6     # required, see note above
 conda activate /path/to/envs/vla-safe
 
-# 2. Submit both final sweeps in parallel
+# 2. Submit both final sweeps in parallel (one per dataset)
 cd /path/to/safe
 sbatch scripts/batch_training/bigred200_pi0fast_final.sbatch
 sbatch scripts/batch_training/bigred200_openvla_final.sbatch
 
-# 3. Monitor (each runs ~9-13 hours)
+# 3. Watch them. Each takes about 9 to 13 hours.
 squeue -u $USER
 sacct -X -j <jobid> --format=JobID,JobName,State,Elapsed,ExitCode
 
-# --- AFTER BOTH JOBS COMPLETE ---
-
-# 4. Sync wandb runs from a node that has internet (wandb is offline on compute nodes)
+# 4. After both jobs finish, sync wandb runs from a node that has internet.
+#    Compute nodes don't, so we keep wandb in offline mode and sync later.
 wandb sync wandb/wandb/
 
-# 5. Build per-architecture leaderboards (mean ± std over 5 seeds, paper-style)
+# 5. Build the per-architecture leaderboard (mean and std over the 5 seeds)
 python scripts/extract_results.py \
     --out logs/safe_pi0fast_final-<jobid>.out \
     --err logs/safe_pi0fast_final-<jobid>.err \
@@ -171,7 +141,7 @@ python scripts/extract_results.py \
     --err logs/safe_openvla_final-<jobid>.err \
     --csv results_openvla_final.csv
 
-# 6. Generate per-rollout failure-detection plots for the best LSTM
+# 6. Plot per-rollout failure curves for the best LSTM run
 LSTM_CKPT=$(awk -F',' 'NR==1{for(i=1;i<=NF;i++) h[$i]=i; next}
     $h["model_name"]=="lstm" && $h["ckpt_path"]!="" {
         print $h["auc_val_unseen"], $h["ckpt_path"]
@@ -183,88 +153,74 @@ python scripts/plot_failure_curves.py \
     --threshold 0.5 --per-rollout
 ```
 
-Replace `lstm` with `gru`/`transformer`/`tcn`/etc. to plot any other architecture.
+Swap `lstm` for `gru`, `transformer`, or `tcn` to plot whichever architecture you want.
 
 ---
 
 ## Repository layout
 
-See [`BIGRED200_FEAT_VIS_SETUP.md` § 5](BIGRED200_FEAT_VIS_SETUP.md) for the
-authoritative tree. Highlights:
+The full tree is in [`BIGRED200_FEAT_VIS_SETUP.md` §5](BIGRED200_FEAT_VIS_SETUP.md). The short version:
 
 ```
 safe/
-├── failure_prob/                # Python package (the SAFE codebase)
-│   ├── conf/                    # Hydra configs
-│   ├── data/                    # Dataset loaders
-│   ├── model/                   # All detector models (incl. our additions)
-│   ├── utils/                   # Eval routines, video, conformal, metrics
-│   └── train.py                 # Main training entrypoint
+├── failure_prob/                  # the SAFE Python package
+│   ├── conf/                      # Hydra configs
+│   ├── data/                      # dataset loaders
+│   ├── model/                     # all detector models, including ours
+│   ├── utils/                     # eval routines, conformal stuff, video
+│   └── train.py                   # main training entrypoint
 ├── scripts/
-│   ├── batch_training/          # SLURM submission scripts
-│   ├── extract_results.py       # OUR tool — parses SLURM logs into CSV/leaderboard
-│   ├── plot_failure_curves.py   # OUR tool — per-rollout failure-score plots
-│   └── visualize_features.py    # FROM SAFE — 2D feature projections
-├── results/                     # Curated sample outputs (committed; small PNGs)
-├── docs/DATASET_LAYOUT.md       # On-disk dataset structure
-├── BIGRED200_FEAT_VIS_SETUP.md  # Full BR200 reproduction guide
-└── BIGRED200_GUIDANCE.md        # Generic IU HPC onboarding
+│   ├── batch_training/            # SLURM and bash submission scripts
+│   ├── extract_results.py         # ours: SLURM logs to leaderboard CSV
+│   ├── plot_failure_curves.py     # ours: per-rollout failure-score plots
+│   └── visualize_features.py      # from SAFE: 2D feature projections
+├── results/                       # curated sample plots, committed
+├── docs/DATASET_LAYOUT.md         # what the dataset folders should look like
+├── BIGRED200_FEAT_VIS_SETUP.md    # cluster reproduction guide
+└── BIGRED200_GUIDANCE.md          # generic IU HPC onboarding
 ```
 
-The training datasets (`rollouts_all 2/`, `openvla_widowx/`) are gitignored —
-download them from the SAFE authors' release links above.
+The training datasets aren't committed (too big, and they belong to the SAFE authors). Download links are in the [Acknowledgements](#acknowledgements) section.
 
 ---
 
 ## Sample results
 
-A small curated set of figures lives in [`results/`](results/) for quick
-inspection without running the pipeline:
+A small set of figures lives in [`results/`](results/) so you can see what the pipeline produces without running anything.
 
-- `results/sample_feat_vis/` — PCA / t-SNE / UMAP projections of pi0-FAST and OpenVLA hidden states
-- `results/sample_failure_curves/` — TCN per-rollout failure-score curves on OpenVLA WidowX (overlay, per-task panels, detection-time histogram, individual rollout PNGs)
+* `results/sample_feat_vis/` has PCA, t-SNE, and UMAP projections of pi0-FAST and OpenVLA hidden states.
+* `results/sample_failure_curves/` has TCN per-rollout failure-score curves on the OpenVLA WidowX dataset. There's an overlay plot, per-task panels, a detection-time histogram, and a few individual rollout PNGs you can use as paper figures.
 
-See [`results/README.md`](results/README.md) for what each figure means.
+The `results/README.md` explains what each file shows.
 
 ---
 
-## Acknowledgements & full credit
+## Acknowledgements
 
-This is **almost entirely the SAFE authors' work**. They built the framework,
-collected the datasets, designed the methodology, and released a clean,
-reproducible codebase. We are extremely grateful for the public release —
-this project would not exist without it.
+The credit for everything that's actually being done here belongs to the SAFE authors. We did not invent the method, collect the data, or write the codebase. We adapted their public release for a class project.
 
-**Original SAFE authors (NeurIPS 2025):**
-[Qiao Gu](https://georgegu1997.github.io/),
-[Yuanliang Ju](https://scholar.google.com/citations?user=rG90YVAAAAAJ&hl=zh-CN),
-[Shengxiang Sun](https://owensun2004.github.io/),
-[Igor Gilitschenski](https://www.gilitschenski.org/igor/),
-[Haruki Nishimura](https://harukins.github.io/),
-[Masha Itkina](https://mashaitkina.weebly.com/),
-[Florian Shkurti](https://www.cs.toronto.edu/~florian/).
+**SAFE: Multitask Failure Detection for Vision-Language-Action Models** (NeurIPS 2025) by [Qiao Gu](https://georgegu1997.github.io/), [Yuanliang Ju](https://scholar.google.com/citations?user=rG90YVAAAAAJ&hl=zh-CN), [Shengxiang Sun](https://owensun2004.github.io/), [Igor Gilitschenski](https://www.gilitschenski.org/igor/), [Haruki Nishimura](https://harukins.github.io/), [Masha Itkina](https://mashaitkina.weebly.com/), and [Florian Shkurti](https://www.cs.toronto.edu/~florian/).
 
-- **SAFE paper**: *SAFE: Multitask Failure Detection for Vision-Language-Action Models* (NeurIPS 2025) — [arXiv](https://arxiv.org/abs/2506.09937), [project page](https://vla-safe.github.io/), [PDF](https://arxiv.org/pdf/2506.09937)
-- **SAFE GitHub repository (the basis of this fork)**: https://github.com/vla-safe/SAFE
-- **Pi0-FAST Franka rollouts dataset**: https://drive.google.com/file/d/13z_cdwnaJota2iHkZbhYgVALujZwtM3b/view?usp=sharing — collected and released by the SAFE authors
-- **OpenVLA WidowX rollouts dataset**: https://drive.google.com/file/d/1EwaccasZjnlM9L6SEYyWqTd7d6-BR9zp/view?usp=sharing — collected and released by the SAFE authors
+* Paper: [arXiv:2506.09937](https://arxiv.org/abs/2506.09937)
+* Project page: https://vla-safe.github.io/
+* Original codebase (this fork builds on it): https://github.com/vla-safe/SAFE
+* Pi0-FAST Franka rollout dataset: https://drive.google.com/file/d/13z_cdwnaJota2iHkZbhYgVALujZwtM3b/view?usp=sharing
+* OpenVLA WidowX rollout dataset: https://drive.google.com/file/d/1EwaccasZjnlM9L6SEYyWqTd7d6-BR9zp/view?usp=sharing
 
-The SAFE codebase itself stands on the shoulders of:
+The SAFE codebase itself was built on top of these projects, all of which deserve credit too:
 
-- [openvla](https://github.com/openvla/openvla) — OpenVLA
-- [openpi](https://github.com/Physical-Intelligence/openpi) — pi0 / pi0-FAST
-- [open-pi-zero](https://github.com/allenzren/open-pi-zero) — open reimplementation of pi0-style models
-- [FAIL-Detect](https://github.com/CXU-TRI/FAIL-Detect) — Chen et al.'s failure-detection baselines (RND + log-density)
+* [openvla](https://github.com/openvla/openvla)
+* [openpi](https://github.com/Physical-Intelligence/openpi)
+* [open-pi-zero](https://github.com/allenzren/open-pi-zero)
+* [FAIL-Detect](https://github.com/CXU-TRI/FAIL-Detect) (the source of the RND and log-density baselines)
 
-We additionally thank the IU UITS Research Technologies team for Big Red 200
-access and support.
+We also thank IU UITS Research Technologies for Big Red 200 access.
 
 ---
 
 ## Citation
 
-If you use this work, **please cite the SAFE paper** (which is the actual
-research contribution):
+If you use this work, please cite the SAFE paper. That's the actual research contribution.
 
 ```bibtex
 @article{gu2025safe,
@@ -275,13 +231,10 @@ research contribution):
 }
 ```
 
-If you specifically use the additional architectures or scripts from this
-fork (GRU/Transformer/TCN detectors, paper-ready leaderboard extractor, or
-per-rollout plot script), feel free to also reference this repository.
+If you specifically use the GRU, Transformer, or TCN detectors from this fork, or one of our extraction or plotting scripts, feel free to also link back to this repo.
 
 ---
 
 ## License
 
-This fork inherits the license of the upstream SAFE repository. Please refer
-to the original SAFE repo for the canonical license file.
+This fork inherits the license of the upstream SAFE repository. See the original repo for the canonical license file.
