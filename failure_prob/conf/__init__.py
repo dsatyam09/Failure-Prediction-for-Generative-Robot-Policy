@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 from omegaconf import MISSING, OmegaConf
 import hydra
@@ -192,10 +192,74 @@ class LstmModelConfig(ModelConfig):
     lambda_hard_heg: float = 0.0
     hard_neg_margin: float = 0.1
     hard_neg_beta: float = 50.0
-    
+
     cumsum: bool = False
     rmean: bool = False
-    
+
+
+@dataclass
+class GruModelConfig(ModelConfig):
+    name: str = "gru"
+    n_layers: int = 1
+    hidden_dim: int = 256
+    n_history_steps: int = -1
+    one_loss_per_seq: bool = False
+
+    lr: float = 3e-4
+    lambda_reg: float = 1.0
+    lambda_hard_heg: float = 0.0
+    hard_neg_margin: float = 0.1
+    hard_neg_beta: float = 50.0
+
+    cumsum: bool = False
+    rmean: bool = False
+
+
+@dataclass
+class TransformerModelConfig(ModelConfig):
+    name: str = "transformer"
+    n_layers: int = 2
+    hidden_dim: int = 128
+    n_heads: int = 4
+    ff_mult: int = 4         # ff_dim = ff_mult * hidden_dim
+    max_seq_len: int = 256   # for positional embedding table
+    one_loss_per_seq: bool = False
+
+    # Transformer-specific tuning: AdamW + warmup is standard practice and
+    # noticeably improves stability/quality on small data.
+    optimizer: str = "adamw"
+    weight_decay: float = 0.05
+    warmup_steps: int = 200
+    dropout: float = 0.1
+
+    lr: float = 3e-4
+    lambda_reg: float = 1.0
+    lambda_hard_heg: float = 0.0
+    hard_neg_margin: float = 0.1
+    hard_neg_beta: float = 50.0
+
+    cumsum: bool = False
+    rmean: bool = False
+
+
+@dataclass
+class TcnModelConfig(ModelConfig):
+    name: str = "tcn"
+    n_layers: int = 4         # number of TemporalBlocks; receptive field = 2^n_layers * (k-1) + 1
+    hidden_dim: int = 128
+    kernel_size: int = 3
+    one_loss_per_seq: bool = False
+
+    lr: float = 3e-4
+    lambda_reg: float = 1.0
+    lambda_hard_heg: float = 0.0
+    hard_neg_margin: float = 0.1
+    hard_neg_beta: float = 50.0
+
+    cumsum: bool = False
+    rmean: bool = False
+
+
 @dataclass
 class EmbedModelConfig(ModelConfig):
     name: str = "embed"
@@ -263,7 +327,7 @@ class TrainConfig:
     eval_save_video_functional: bool = False
     eval_save_video_multiproc: bool = True
     eval_save_timing_plots: bool = False
-    eval_save_logs: bool = False
+    eval_save_logs: bool = True
     eval_save_ckpt: bool = False
     logs_save_root: str = "./logs/"
     logs_save_path: str = MISSING
@@ -281,7 +345,7 @@ class Config:
     # These fields are required and will be provided by Hydra’s config groups.
     dataset: DatasetConfig = MISSING
     model: ModelConfig = MISSING
-    train: TrainConfig = TrainConfig()
+    train: TrainConfig = field(default_factory=TrainConfig)
 
 #########################
 # Register with ConfigStore
@@ -300,6 +364,9 @@ cs.store(group="dataset", name="base_pizero_fast_droid", node=PizeroFastDroidDat
 # Register model variants into the "model" config group.
 cs.store(group="model", name="base_indep", node=IndepModelConfig)
 cs.store(group="model", name="base_lstm", node=LstmModelConfig)
+cs.store(group="model", name="base_gru", node=GruModelConfig)
+cs.store(group="model", name="base_transformer", node=TransformerModelConfig)
+cs.store(group="model", name="base_tcn", node=TcnModelConfig)
 cs.store(group="model", name="base_embed", node=EmbedModelConfig)
 cs.store(group="model", name="base_rnd", node=RNDModelConfig)
 cs.store(group="model", name="base_logpzo", node=LogpZOModelConfig)

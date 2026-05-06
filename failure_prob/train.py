@@ -53,8 +53,10 @@ def main(cfg: Config) -> None:
     with Timer("Loading rollouts"):
         all_rollouts = load_rollouts(cfg)
         print(f"Loaded {len(all_rollouts)} rollouts")
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if cfg.dataset.load_to_cuda:
-            all_rollouts = [r.to("cuda") for r in all_rollouts]
+            all_rollouts = [r.to(device) for r in all_rollouts]
 
     if len(all_rollouts) == 0:
         raise ValueError(f"No rollouts loaded from {cfg.dataset.data_path}")
@@ -126,7 +128,7 @@ def main(cfg: Config) -> None:
         
         model: BaseModel = get_model(cfg, input_dim)
         print(model)
-        model.to("cuda")
+        model.to(device)
         
         optimizer, lr_scheduler = model.get_optimizer()
 

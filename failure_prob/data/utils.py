@@ -70,7 +70,10 @@ class RolloutDataset(Dataset):
 
         self.device = device
         if self.device is None:
-            self.device = "cuda" if cfg.dataset.load_to_cuda else "cpu"
+            if cfg.dataset.load_to_cuda:
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            else:
+                self.device = "cpu"
         
         # Weigh the loss by the frequency of success/failure
         freq_0 = (sum([r.episode_success == 0 for r in rollouts]) + 1) / len(rollouts)

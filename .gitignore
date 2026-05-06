@@ -157,7 +157,48 @@ flash_attn_cache
 slurm_logs
 /outputs
 /multirun
-/results
 /logs
 /artifacts
+/setup_envs.bash.gemini/
+
+# ----------------------------------------------------------------
+# Project-specific (SAFE on BR200)
+# ----------------------------------------------------------------
+
+# Datasets (multi-GB; download separately, see BIGRED200_FEAT_VIS_SETUP.md §4.6)
+/rollouts_all 2/
+/openvla_widowx/
+
+# Local environment vars (may contain personal paths or secrets)
 /setup_envs.bash
+
+# Generated result CSVs and full training stdout (regenerated from scripts/extract_results.py)
+/results*.csv
+/full_training_output.log
+
+# Large intermediate artifacts (projection caches, etc.) inside notebooks/
+notebooks/feat_vis/**/feats_projected_*.pkl
+
+# Notebook outputs are large; only curated samples live under results/
+/notebooks/
+
+# Stray rsync artifact when paths were misquoted earlier
+sbdubey@*/
+
+# Misc working dirs / personal skills (don't push to public repo)
+.gemini/
+.specify/
+.claude/
+iu-hpc-agent/
+skills/
+iu-hpc-job-manager.skill/
+iu-hpc-job-manager.skill
+
+# Markdown working notes that are scratch-only (keep BIGRED200_FEAT_VIS_SETUP.md + BIGRED200_GUIDANCE.md)
+BIGRED200_FEAT_VIS_SETUP.md.bak
+
+# Pre-existing OpenVLA WidowX content lives outside the repo on a read-only mount
+openvla_widowx/
+
+# Generated wandb artifacts (sometimes get caught at non-root paths)
+**/wandb/wandb/
